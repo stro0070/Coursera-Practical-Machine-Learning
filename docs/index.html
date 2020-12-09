@@ -1,1 +1,137 @@
-<html><body><p>Hello World</p></body></html>
+---
+title: "Machine Learning Course Project"
+author: "Noah Strom"
+date: "12/7/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+
+```{r, chunk1}
+#Set working directory.
+setwd('~/Dropbox/Core_Biome/R Scripts/Coursera Practical Machine Learning')
+
+#The task is to build a classifier that will allow me to predict, given accelerometer data, how well a person is performing the barbell lift.  
+
+#Read in training data.
+training <- read.csv('~/Dropbox/Core_Biome/R Scripts/Coursera Practical Machine Learning/pml-training.csv')
+
+#Read in testing data.
+testing <- read.csv('~/Dropbox/Core_Biome/R Scripts/Coursera Practical Machine Learning/pml-testing.csv')
+
+#examine the classes
+unique(training$classe) #There are 5 classes. I assume this is like a grading system, where A is the best score. I want to build a model that can predict which class someone will fall in given predictor data.
+
+#This will remove all columns containing at least one NA:
+training[training==""]<-NA #set blanks equal to NA
+trainingNoNA <- training[ , colSums(is.na(training)) == 0] #remove columns that have any NAs
+#head(trainingNoNA)
+#tail(trainingNoNA)
+dim(trainingNoNA)
+```
+
+```{r echo=T, results='hide'}
+#Look at variables. Based on this, num_window, user_name, and X seem to be unimportant.
+head(trainingNoNA$num_window)
+head(trainingNoNA$user_name)
+head(trainingNoNA$X)
+head(trainingNoNA$raw_timestamp_part_1)
+head(trainingNoNA$raw_timestamp_part_2)
+head(trainingNoNA$cvtd_timestamp)
+head(trainingNoNA$new_window)
+head(trainingNoNA$num_window)
+head(trainingNoNA$roll_belt)
+head(trainingNoNA$pitch_belt)
+head(trainingNoNA$yaw_belt)
+head(trainingNoNA$total_accel_belt)
+head(trainingNoNA$magnet_dumbbell_z)
+```
+
+```{r chunk2, cache=TRUE}
+#Limit data to just those columns that contain "accel", "gyro", or "magnet", "roll", "pitch", or "yaw".
+trainingNoNASubset <- trainingNoNA[,c(grep('accel', names(trainingNoNA)), grep('gyro', names(trainingNoNA)), grep('magnet', names(trainingNoNA)), grep('roll', names(trainingNoNA)), grep('pitch', names(trainingNoNA)), grep('yaw', names(trainingNoNA)), grep('classe', names(trainingNoNA)))]
+
+#head(trainingNoNASubset)
+
+#Reduce the number of variables by removing collinear variables.
+library(caret)
+corIndices <- findCorrelation(cor(trainingNoNASubset[,1:(ncol(trainingNoNASubset)-1)]), cutoff=0.9)
+names(trainingNoNASubset)[corIndices]
+
+trainingNoNASubset <- trainingNoNASubset[,-corIndices]
+
+#head(trainingNoNASubset)
+dim(trainingNoNASubset)
+
+#load the caret library
+library(caret)
+
+#Make classe a factor so this script works!
+trainingNoNASubset$classe <- factor(trainingNoNASubset$classe)
+
+# define the control using a random forest selection function
+control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+
+###Feature selection
+##There are too many features to run an efficient machine learning algorithm. These should be reduced to the most important features. I used the RFE algorithm to identify the most important features (predictors).
+
+# run the RFE algorithm
+results <- rfe(trainingNoNASubset[,1:(ncol(trainingNoNASubset)-1)], trainingNoNASubset[,ncol(trainingNoNASubset)], rfeControl=control)
+
+# summarize the results
+print(results)
+#It looks 4 or 8 predictors will be sufficient to make a model. In recursive feature selection, the outer resampling method resulted in 10 fold cross validation.
+
+# list the chosen features
+predictors(results)
+
+# plot the results
+plot(results, type=c("g", "o")) 
+#The plot shows that accuracy improves with more predictors, but not by very much beyond 16 variables. However, even with 8 variables accuracy is between 98% and 99%, so I decided to only use 8 predictors to make a faster algorithm.
+
+#subset the data to include the top 8 predictors and the dependent variable, classe.
+trainingNoNASubsetTop8 <- trainingNoNASubset[,c(predictors(results)[1:8], 'classe')]
+
+###Try a few different learning methods and check the accuracy using cross validation with 10 folds (k = 10).
+
+#train a random forest classifier on the 8-predictor data subset. The trControl method performs 10-fold cross-validation.
+control <- trainControl(method = "cv", number = 10)
+modRf <- train(classe~., trainingNoNASubsetTop8, method = 'rf', trControl = control)
+modRf #98% accuracy.
+
+#train a boosted tree (generalized boosted regression modeling (gbm)) on the 8-predictor data subset. The trControl method performs 10-fold cross-validation.
+modGbm <- train(classe~., trainingNoNASubsetTop8, 
+                method = 'gbm', 
+                trControl = control,
+                ## This last option is actually one
+                ## for gbm() that passes through
+                verbose = FALSE)
+modGbm #92% accuracy
+
+#train a linear disciminant analysis model on the 8-predictor data subset. The trControl method performs 10-fold cross-validation.
+preproc <- c("center", "scale")
+performance_metric <- "Accuracy"
+modLda <- train(classe ~ .,
+                data = trainingNoNASubsetTop8, 
+                method = "lda",
+                metric = performance_metric,
+                trControl = control, 
+                preProcess = preproc)
+modLda #48% accuracy
+
+#The most accurate model is Random Forest (98% based on 10-fold cross-validation). The boosted model is also quite good, at 92%, but the LDA was poor, at 48% accuracy. Therefore, rather than stacking these methods, I decided to use only the Random Forest method to predict the classes in the test set.
+
+#Test set class predictions:
+predict(modRf, testing)
+```
+
+
